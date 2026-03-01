@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Network Monitoring</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        .up { background-color: #d4edda; }
+        .down { background-color: #f8d7da; }
+        .logo { max-height: 80px; }
+        .loading-box {
+            padding: 20px;
+            font-size: 20px;
+            font-weight: bold;
+            text-align: center;
+            background-color: #f0f0f0;
+            border: 2px dashed #007bff;
+            color: #007bff;
+            margin-bottom: 20px;
+        }
+        th, td {
+            padding: 12px !important;
+            vertical-align: middle !important;
+        }
+    </style>
+</head>
+<body>
+<div class="container mt-4">
+    <div class="text-center mb-4">
+        <img src="{{ url_for('static', filename='logo.png') }}" class="logo" alt="Company Logo">
+    </div>
+
+    <div class="d-flex justify-content-between mb-3">
+        <h3>Device Link Status</h3>
+        <button class="btn btn-primary" onclick="loadData()">Fetch Current Down Links</button>
+    </div>
+
+    <!-- Loading Message -->
+    <div id="loading" class="loading-box" style="display: none;">Loading data from switches... Please wait.</div>
+
+    <!-- Device Table Container -->
+    <div id="deviceTable"></div>
+</div>
+
+<script>
+function loadData() {
+    document.getElementById("loading").style.display = "block";
+    document.getElementById("deviceTable").innerHTML = "";
+
+    // Step 1: Call the /refresh API to update switch data
+    fetch('/refresh', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(refreshResponse => {
+        if (refreshResponse.status === "success") {
+            // Step 2: After refresh completes, fetch updated data
+            return fetch('/get_data');
+        } else {
+            throw new Error(refreshResponse.message || "Refresh failed");
+        }
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("loading").style.display = "none";
+
+        let html = `<div class="table-responsive">
+            <table class="table table-bordered table-hover">
+                <thead class="thead-dark">
+                    <tr>
+                        <th>Vendor</th>
+                        <th>SysName</th>
+                        <th>Interface</th>
+                        <th>Optical Power</th>
+                        <th>Status</th>
+                        <th>Errors</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        for (let vendor in data) {
+            data[vendor][0].forEach(dev => {
+            const rowClass = dev.Link_status === 'Down' ? 'down' : 'up';
+            const portId = dev.port_id;
+            const rxPowerId = `rx-${portId}`;
+            const hostname = dev.hostname;
+            
+            const ifIndex = ['zy3750', 'huawei', 'juniper'].includes(vendor.toLowerCase())
+                ? dev.port_number[0]?.ifDescr
+                : dev.port_number[0]?.ifIndex;
+
+            const buttonId = `btn-${portId}`;
+
+            html += `<tr id="row-${portId}" class="${rowClass}">
+                <td>${vendor}</td>
+                <td>${dev.sysName}</td>
+                <td>${dev.port_number[0]?.ifDescr || 'N/A'}</td>
+                <td id="${rxPowerId}">${dev.Rx_optical_power || 'N/A'}</td>
+                <td>${dev.Link_status || 'N/A'}</td>
+                <td>${dev.Errors || dev.Input_errors || '0'}</td>
+                <td>
+                    <button 
+                        id="${buttonId}"
+                        data-hostname="${hostname}" 
+                        data-model="${vendor}" 
+                        data-ifindex="${ifIndex}" 
+                        class="btn btn-warning btn-sm"
+                        onclick="checkOpticalPower('${hostname}', '${vendor}', '${ifIndex}', '${rxPowerId}')">
+                        Check
+                    </button>
+                </td>
+            </tr>`;
+        });
+
+        }
+
+        html += `</tbody></table></div>`;
+        document.getElementById("deviceTable").innerHTML = html;
+    })
+    .catch(error => {
+        document.getElementById("loading").innerHTML = "Error loading data!";
+        console.error("Error:", error);
+    });
+}
+
+
+function checkOpticalPower(hostname, model, ifIndex, elementId) {
+    const button = event.target;
+    button.disabled = true;
+    button.innerHTML = `<span class="spinner-border spinner-border-sm"></span> Checking...`;
+
+    fetch('/check_optical_power', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ hostname, model, ifIndex })
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById(elementId).innerText = data.Rx_optical_power || "N/A";
+    })
+    .catch(error => {
+        console.error('Error fetching optical power:', error);
+        alert("Failed to fetch optical power.");
+    })
+    .finally(() => {
+        button.disabled = false;
+        button.innerText = "Check";
+
+    });
+}
+
+// window.onload = loadData;
+</script>
+</body>
+</html>
